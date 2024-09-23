@@ -1,12 +1,14 @@
 # DELTA_iDISCO
 
-**DELTA_iDISCO** is a pipeline designed for processing and analyzing imaging data from iDISCO experiments, specifically for registering brain images to the Allen Brain Atlas and extracting regional statistics for further analysis.
+**DELTA_iDISCO** is a pipeline designed for processing and analyzing imaging data from iDISCO experiments, specifically for registering brain images to the Allen Brain Atlas and extracting regional statistics for further analysis. It assumes a directory structure and file names that are the default output of the [MuVi](https://www.bruker.com/en/products-and-solutions/fluorescence-microscopy/light-sheet-microscopes/muvi-spim-family.html) system.
+
+Please change the functions in utils.py for different inputs.
 
 This pipeline is based on methods and resources from the following work:
 
-Pisano, T. J. (2019). Connectivity of the Posterior Cerebellum: Transsynaptic Viral Tracing with Light-Sheet Imaged Whole-Mouse Brains. [https://dataspace.princeton.edu/handle/88435/dsp01jq085n77b](https://dataspace.princeton.edu/handle/88435/dsp01jq085n77b)
+Pisano, T. J. (2019). Connectivity of the Posterior Cerebellum: Transsynaptic Viral Tracing with Light-Sheet Imaged Whole-Mouse Brains. [Thesis](https://dataspace.princeton.edu/handle/88435/dsp01jq085n77b)
 
-Source code and paramater are taken form here [Dennis lab](https://github.com/the-dennis-lab/cleared_brains/)
+Source code and paramaters are mostly copied from the following Dennis lab [repo](https://github.com/the-dennis-lab/cleared_brains/)
 
 
 ## Setup Instructions
@@ -25,28 +27,13 @@ Source code and paramater are taken form here [Dennis lab](https://github.com/th
     `pip install -r requirements.txt`
 
 
-### download requiered files
+## download requiered files
 
-Use this googld drive [link](https://drive.google.com/drive/folders/1BzE3QRo38KOK5UYuipsq5TGubzbdSzap?usp=sharing) to download the atlas, annotation volume and paramater files
+Use this googld drive [link](https://drive.google.com/drive/folders/1BzE3QRo38KOK5UYuipsq5TGubzbdSzap?usp=sharing) to download the atlas, annotation volume and paramater files 
+
 ## How to Use
 
-### Single Animal Processing
-
-To process a single animal using the pipeline, look at `main.ipynb` notebook
-
-### Batch Processing on a Cluster
-
-To process multiple animals in parallel on a high-performance cluster, use the `submit_jobs.sh` script. This will submit a separate job for each animal using `bsub`.
-
-1. Edit the `submit_jobs.sh` script to specify the animal IDs and the base directory for the data.
-2. Submit the jobs:
-    `cd scripts`
-    
-    `bash submit_jobs.sh`
-
-This will:
-- Submit a job for each animal using the LSF job scheduler.
-- Process the images for each animal in parallel on the cluster.
+Have a look at the `src\main.ipynb` notebook to see how to run a single brain or bsub a batch
 
 ## Example Results
 
