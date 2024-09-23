@@ -1,0 +1,14 @@
+name: delta_idisco
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - scikit-image
+  - h5py
+  - pip
+  - pip:
+    - itk
+    - itk-elastix

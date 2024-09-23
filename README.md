@@ -2,31 +2,11 @@
 
 **DELTA_iDISCO** is a pipeline designed for processing and analyzing imaging data from iDISCO experiments, specifically for registering brain images to the Allen Brain Atlas and extracting regional statistics for further analysis.
 
-This repository provides a modular and scalable system for performing these tasks across large datasets, such as brain scans from multiple animals, and is optimized for use on high-performance computing (HPC) clusters.
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Setup Instructions](#setup-instructions)
-  - [Using Conda](#using-conda)
-  - [Using Pip](#using-pip)
-- [How to Use](#how-to-use)
-  - [Single Animal Processing](#single-animal-processing)
-  - [Batch Processing on a Cluster](#batch-processing-on-a-cluster)
-- [Example Results](#example-results)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Overview
-
-DELTA_iDISCO provides a systematic approach to register brain imaging data to the Allen Brain Atlas using **ITK-Elastix**, perform image transformations, and calculate region-based statistics such as mean intensity, median, and standard deviation for different brain regions. It automates the analysis of iDISCO cleared brain scans by organizing workflows for high-throughput data analysis on an HPC cluster.
-
 This pipeline is based on methods and resources from the following work:
 
 Pisano, T. J. (2019). Connectivity of the Posterior Cerebellum: Transsynaptic Viral Tracing with Light-Sheet Imaged Whole-Mouse Brains. [https://dataspace.princeton.edu/handle/88435/dsp01jq085n77b](https://dataspace.princeton.edu/handle/88435/dsp01jq085n77b)
 
-For further details and a more in-depth look at the source code for processing iDISCO brains refer Here:  
-[Dennis lab](https://github.com/the-dennis-lab/cleared_brains/)
+Source code and paramater are taken form here [Dennis lab](https://github.com/the-dennis-lab/cleared_brains/)
 
 
 ## Setup Instructions
@@ -48,14 +28,7 @@ For further details and a more in-depth look at the source code for processing i
 
 ### Single Animal Processing
 
-To process a single animal using the pipeline, run the `main.py` script:
-
-`python src/main.py --animal ANM550749_left_JF552`
-
-This command will:
-- Register the images for the specified animal.
-- Apply the transforms to all image channels (`ch0`, `ch1`, `ch2`).
-- Calculate region-based statistics (e.g., mean intensity, standard deviation) for each region.
+To process a single animal using the pipeline, look at `main.ipynb` notebook
 
 ### Batch Processing on a Cluster
 

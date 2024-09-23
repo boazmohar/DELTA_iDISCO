@@ -1,0 +1,6 @@
+itk
+itk-elastix
+numpy
+pandas
+scikit-image
+h5py
