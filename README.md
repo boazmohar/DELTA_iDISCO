@@ -24,6 +24,10 @@ Source code and paramater are taken form here [Dennis lab](https://github.com/th
 1. Install the necessary dependencies:
     `pip install -r requirements.txt`
 
+
+### download requiered files
+
+Use this googld drive [link](https://drive.google.com/drive/folders/1BzE3QRo38KOK5UYuipsq5TGubzbdSzap?usp=sharing) to download the atlas, annotation volume and paramater files
 ## How to Use
 
 ### Single Animal Processing
