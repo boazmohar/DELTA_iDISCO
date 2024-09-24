@@ -10,6 +10,13 @@ Pisano, T. J. (2019). Connectivity of the Posterior Cerebellum: Transsynaptic Vi
 
 Source code and paramaters are mostly copied from the following Dennis lab [repo](https://github.com/the-dennis-lab/cleared_brains/)
 
+The atlas is fromn the paper cited below, cropped to fit our hemi-brains:
+Perens, J., Salinas, C. G., Skytte, J. L., Roostalu, U., Dahl, A. B., Dyrby, T. B., Wichern, F., Barkholt, P., Vrang, N., Jelsing, J., & Hecksher-Sørensen, J. (2021). An Optimized Mouse Brain Atlas for Automated Mapping and Quantification of Neuronal Activity Using iDISCO+ and Light Sheet Fluorescence Microscopy. Neuroinformatics, 19(3), 433–446.[Link](https://doi.org/10.1007/s12021-020-09490-8)
+
+
+It is also avivalbe from this [GitHub repo](https://github.com/Gubra-ApS/LSFM-mouse-brain-atlas/)
+
+
 
 ## Setup Instructions
 
