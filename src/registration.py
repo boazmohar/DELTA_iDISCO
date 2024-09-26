@@ -4,14 +4,20 @@ from utils import read_h5_image
 
 # Combined function for registration and applying transforms
 def register_and_transform(fx, files, output_dir, param_files, logger):
+    num_cores = os.cpu_count()  
+    itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(num_cores)
+    logger.info(f"Register_and_transform started, set ITK to use {num_cores} threads.")
+
     # Step 1: Register ch0 (moving image) with the fixed image
     mv = read_h5_image(files['ch0'], 'Data')
     
+    logger.info(f"Moving image read from  {files['ch0']}")
     # Create a new ParameterObject for registration
     parameter_object = itk.ParameterObject.New()
     for p in param_files:
         parameter_object.AddParameterFile(p)
     
+    logger.info("param files read")
     # Create output directory if it doesn't exist
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -37,6 +43,7 @@ def register_and_transform(fx, files, output_dir, param_files, logger):
     for name, path in files.items():
         logger.info(f'Applying transform to {name}')
         moving_image = read_h5_image(path, 'Data')  # Read the image
+        logger.info(f'Moving_image from {path} loaded')
         transformix_filter = itk.TransformixFilter.New(Input=moving_image, TransformParameterObject=parameter_object_transformix)
         transformix_filter.SetComputeSpatialJacobian(False)
         transformix_filter.SetComputeDeterminantOfSpatialJacobian(False)
