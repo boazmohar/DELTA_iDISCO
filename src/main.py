@@ -8,7 +8,7 @@ from skimage import io
 import numpy as np
 import itk
 
-def process_animal(animal, files, base_dir, fx, param_files, annotation_np):
+def process_animal(animal, files, base_dir, fx, param_files, annotation_np, logger):
     """
     Process a single animal by:
     - Registering and transforming the images
@@ -20,26 +20,23 @@ def process_animal(animal, files, base_dir, fx, param_files, annotation_np):
     os.makedirs(output_dir, exist_ok=True)
 
     # Step 1: Register and Transform
-    logging.info("Starting registration and transformation.")
-    register_and_transform(fx, files, output_dir, param_files)
-    logging.info("Finished registration and transformation.")
+    logger.info(f"Starting registration and transformation for {animal}.")
+    register_and_transform(fx, files, output_dir, param_files, logger)
+    logger.info(f"Finished registration and transformation for {animal}.")
 
     # Step 2: Compute Region Statistics
-    logging.info("Starting computation of region statistics.")
+    logger.info(f"Starting computation of region statistics for {animal}.")
     compute_region_stats(files, output_dir, annotation_np)
-    logging.info("Finished computation of region statistics.")
+    logger.info(f"Finished computation of region statistics for {animal}.")
     
-    # Log the location of the logs and output files
-    log_file = os.path.join(output_dir, f'registration_log_{animal}.txt')
-    logging.info(f"Processing logs and outputs are saved in: {log_file}")
+    logger.info(f"Processing logs and outputs are saved in {output_dir}")
 
 
 if __name__ == "__main__":
     # Argument parser to get input from the command line
     parser = argparse.ArgumentParser(description="Process an animal for registration and analysis.")
     
-    parser.add_argument('--animal', type=str, required=True, default='ANM550749_left_JF552',
-                        help="Animal name (e.g., ANM550749_left_JF552)")
+    parser.add_argument('--animal', type=str, required=True, help="Animal name (e.g., ANM550749_left_JF552)")
     parser.add_argument('--base_dir', type=str, default='/nrs/spruston/Boaz/I2/2024-09-19_iDISCO_CalibrationBrains',
                         help="Base directory where animal data is stored")
     parser.add_argument('--fx', type=str, default='/nrs/spruston/Boaz/I2/atlas10_hemi.tif', 
@@ -51,11 +48,11 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    # Setup logging specific to this animal
-    setup_logging(args.base_dir, args.animal)
+    # Setup logging specific to this animal, logging to both file and console
+    logger = setup_logging(args.base_dir, args.animal)
 
     # Load the fixed image (fx)
-    logging.info(f"Loading fixed image (fx) from {args.fx}.")
+    logger.info(f"Loading fixed image (fx) from {args.fx}.")
     fx = itk.imread(args.fx, pixel_type=itk.US)
     
     # Load the parameter files
@@ -65,14 +62,14 @@ if __name__ == "__main__":
         os.path.join(args.param_files_dir, 'Order4_Par0000bspline.txt'),
         os.path.join(args.param_files_dir, 'Order5_Par0000bspline.txt')
     ]
-    logging.info(f"Loaded parameter files from {args.param_files_dir}.")
+    logger.info(f"Loaded parameter files from {args.param_files_dir}.")
 
     # Load the annotation volume
-    logging.info(f"Loading annotation volume from {args.annotation_np}.")
+    logger.info(f"Loading annotation volume from {args.annotation_np}.")
     annotation_np = np.int64(io.imread(args.annotation_np))
     
     # Match H5 files by channels for all animals
-    logging.info(f"Matching H5 files in {args.base_dir}.")
+    logger.info(f"Matching H5 files in {args.base_dir}.")
     animals_files = match_h5_files_by_channels(args.base_dir)
 
     # Get the files for the selected animal
@@ -80,11 +77,11 @@ if __name__ == "__main__":
     files = animals_files.get(animal)
     
     if not files:
-        logging.error("No files found for this animal.")
+        logger.error(f"No files found for animal {animal}.")
         print(f"No files found for animal {animal}")
     else:
-        logging.info("Files found. Starting processing.")
+        logger.info(f"Files found for {animal}. Starting processing.")
         # Process the animal
-        process_animal(animal, files, args.base_dir, fx, param_files, annotation_np)
+        process_animal(animal, files, args.base_dir, fx, param_files, annotation_np, logger)
 
-    logging.info("Processing completed.")
+    logger.info(f"Processing completed for {animal}.")

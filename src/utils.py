@@ -1,4 +1,5 @@
 import os
+import logging
 import h5py
 from collections import defaultdict
 
@@ -24,3 +25,36 @@ def match_h5_files_by_channels(base_dir):
                 elif "uni_tp-0_ch-2" in filename:
                     file_groups[dir_name]["ch2"] = full_path
     return {key: value for key, value in file_groups.items() if all(value.values())}
+
+
+def setup_logging(base_dir, animal):
+    """
+    Sets up logging to both a file in the base directory with the animal's name and the console.
+    """
+    log_file = os.path.join(base_dir, f'process_log_{animal}.txt')
+
+    # Create a custom logger
+    logger = logging.getLogger(animal)
+    logger.setLevel(logging.INFO)
+    
+    # Check if handlers are already added (to prevent duplicate logs)
+    if not logger.hasHandlers():
+        # Create handlers
+        f_handler = logging.FileHandler(log_file)  # Log to file
+        c_handler = logging.StreamHandler()  # Log to console
+        
+        f_handler.setLevel(logging.INFO)
+        c_handler.setLevel(logging.INFO)
+        
+        # Create formatters and add them to handlers
+        log_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        f_handler.setFormatter(log_format)
+        c_handler.setFormatter(log_format)
+        
+        # Add handlers to the logger
+        logger.addHandler(f_handler)
+        logger.addHandler(c_handler)
+    
+    logger.info("Logging initialized for animal processing.")
+    
+    return logger

@@ -17,7 +17,6 @@ Perens, J., Salinas, C. G., Skytte, J. L., Roostalu, U., Dahl, A. B., Dyrby, T. 
 It is also avivalbe from this [GitHub repo](https://github.com/Gubra-ApS/LSFM-mouse-brain-atlas/)
 
 
-
 ## Setup Instructions
 
 ### Using Conda
