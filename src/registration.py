@@ -43,8 +43,9 @@ def register_and_transform(fx, files, output_dir, param_files, logger):
     for name, path in files.items():
         logger.info(f'Applying transform to {name}')
         moving_image = read_h5_image(path, 'Data')  # Read the image
-        logger.info(f'Moving_image from {path} loaded')
-        transformix_filter = itk.TransformixFilter.New(Input=moving_image, TransformParameterObject=parameter_object_transformix)
+        itk_image = itk.image_from_array(moving_image)
+        logger.info(f'Moving_image from {path} loaded and converted to itk')
+        transformix_filter = itk.TransformixFilter.New(Input=itk_image, TransformParameterObject=parameter_object_transformix)
         transformix_filter.SetComputeSpatialJacobian(False)
         transformix_filter.SetComputeDeterminantOfSpatialJacobian(False)
         transformix_filter.SetComputeDeformationField(False)
