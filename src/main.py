@@ -8,7 +8,16 @@ from skimage import io
 import numpy as np
 import itk
 
-def process_animal(animal, files, base_dir, fx, param_files, annotation_np, logger):
+# Mapping of string names to actual NumPy functions
+FUNCTION_MAP = {
+    'mean': np.mean,
+    'median': np.median,
+    'std': np.std,
+    'min': np.min,
+    'max': np.max
+}
+
+def process_animal(animal, files, base_dir, fx, param_files, annotation_np, funcs, logger):
     """
     Process a single animal by:
     - Registering and transforming the images
@@ -26,9 +35,10 @@ def process_animal(animal, files, base_dir, fx, param_files, annotation_np, logg
 
     # Step 2: Compute Region Statistics
     logger.info(f"Starting computation of region statistics for {animal}.")
-    compute_region_stats(files, output_dir, annotation_np)
-    logger.info(f"Finished computation of region statistics for {animal}.")
-    
+
+    # Compute region statistics in parallel using shared memory and dynamic number of cores
+    num_cores = os.cpu_count()  # Automatically detect the number of cores
+    compute_region_stats(files, output_dir, annotation_np, funcs, num_cores)
     logger.info(f"Processing logs and outputs are saved in {output_dir}")
 
 
@@ -46,6 +56,10 @@ if __name__ == "__main__":
     parser.add_argument('--annotation_np', type=str, default='/nrs/spruston/Boaz/I2/annotatin10_hemi.tif', 
                         help="Path to the annotation volume file in TIFF format")
     
+    # New argument: List of functions to compute
+    parser.add_argument('--functions', type=str, nargs='+', default=['mean', 'median', 'std'],
+                        help="List of statistical functions to compute. Options: mean, median, std, min, max")
+
     args = parser.parse_args()
 
     # Setup logging specific to this animal, logging to both file and console
@@ -66,7 +80,8 @@ if __name__ == "__main__":
 
     # Load the annotation volume
     logger.info(f"Loading annotation volume from {args.annotation_np}.")
-    annotation_np = np.int64(io.imread(args.annotation_np))
+    itk_annotation = itk.imread(args.annotation_np, itk.ULL)
+    annotation_np = itk.array_view_from_image(itk_annotation)
     
     # Match H5 files by channels for all animals
     logger.info(f"Matching H5 files in {args.base_dir}.")
@@ -81,7 +96,15 @@ if __name__ == "__main__":
         print(f"No files found for animal {animal}")
     else:
         logger.info(f"Files found for {animal}. Starting processing.")
+
+        # Convert the list of function names into actual NumPy functions
+        funcs = [FUNCTION_MAP[func] for func in args.functions if func in FUNCTION_MAP]
+
+        if not funcs:
+            logger.error("No valid functions specified. Exiting.")
+            exit(1)
+
         # Process the animal
-        process_animal(animal, files, args.base_dir, fx, param_files, annotation_np, logger)
+        process_animal(animal, files, args.base_dir, fx, param_files, annotation_np, funcs, logger)
 
     logger.info(f"Processing completed for {animal}.")
