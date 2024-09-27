@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 import h5py
 from collections import defaultdict
@@ -58,3 +59,34 @@ def setup_logging(base_dir, animal):
     logger.info("Logging initialized for animal processing.")
     
     return logger
+
+
+def collect_region_stats_paths(base_path):
+    """
+    Collects the paths of all 'region_stats.csv' files from subdirectories of base_path.
+    
+    The function assumes that the 6-digit ANM number is part of the directory structure and extracts it.
+    
+    Parameters:
+    - base_path: The base directory to search for 'region_stats.csv' files.
+    
+    Returns:
+    - A dictionary where the keys are 6-digit ANM numbers and values are the paths to the 'region_stats.csv' files.
+    """
+    region_stats_paths = {}
+    
+    # Define a regex pattern to capture the 6-digit ANM number
+    anm_pattern = re.compile(r"ANM(\d{6})")
+    
+    # Walk through all subdirectories of base_path
+    for root, dirs, files in os.walk(base_path):
+        for file in files:
+            if file == 'region_stats.csv':
+                # Check if the path contains an ANM number
+                match = anm_pattern.search(root)
+                if match:
+                    anm_number = match.group(1)  # Extract the ANM number
+                    full_path = os.path.join(root, file)
+                    region_stats_paths[anm_number] = full_path
+    
+    return region_stats_paths
