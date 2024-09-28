@@ -5,3 +5,8 @@ pandas
 scikit-image
 h5py
 tqdm
+openpyxl
+scikit-learn
+pynrrd
+plotly
+scipy
