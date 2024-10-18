@@ -1,0 +1,2 @@
+Slope: 1.4247
+Intercept: 202.8271
