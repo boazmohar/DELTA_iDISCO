@@ -37,6 +37,9 @@ It is also avivalbe from this [GitHub repo](https://github.com/Gubra-ApS/LSFM-mo
 
 Use this googld drive [link](https://drive.google.com/drive/folders/1BzE3QRo38KOK5UYuipsq5TGubzbdSzap?usp=sharing) to download the atlas, annotation volume and paramater files 
 
+
+Behavior analysis is using this github repo [neuro_cl](https://github.com/kstach01/neuro_cl)
+
 ## How to Use
 
 Have a look at the `src\main.ipynb` notebook to see how to run a single brain or bsub a batch
