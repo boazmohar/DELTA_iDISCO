@@ -5,6 +5,9 @@ from scipy.ndimage import zoom, sobel
 import plotly.io as pio
 pio.renderers.default = 'iframe'  # Set to 'notebook' for JupyterLab support
 from skimage import measure
+from scipy.stats import linregress
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 def downsample_volume(volume, downsample_factor):
@@ -143,3 +146,35 @@ def get_values(df):
     change = (df['ratio'].values-1)*100
     return region_ids, region_names, change
     
+
+# Create pair plot with linked axes, x=y line, and linear regression
+def create_custom_pair_plot(df):
+    # Create the pair plot
+    g = sns.pairplot(df)
+    
+    # Get the axis limits
+    x_min, x_max = df.min().min(), df.max().max()
+    
+    # Iterate through each subplot
+    for i, j in zip(*np.triu_indices_from(g.axes, 1)):
+        ax = g.axes[i, j]
+        x = df.iloc[:, j]
+        y = df.iloc[:, i]
+        
+        # Perform linear regression
+        slope, intercept, r_value, p_value, std_err = linregress(x, y)
+        
+        # Plot the regression line
+        ax.plot(x, intercept + slope * x, 'b', label=f'y={slope:.2f}x+{intercept:.2f}')
+        
+        # Set the same limits for x and y axes
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(x_min, x_max)
+        
+        # Plot the x=y line
+        ax.plot([x_min, x_max], [x_min, x_max], 'r--')
+        
+        # Set the title with slope and R² value
+        ax.set_title(f'Slope: {slope:.2f}, R²: {r_value**2:.2f}')
+    
+    plt.show()
