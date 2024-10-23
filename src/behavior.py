@@ -2,8 +2,11 @@ import os
 import pandas as pd
 import pickle
 import time
+
+from datetime import datetime, timedelta
 from vr2p.gimbl.parse import parse_gimbl_log
 from utils import behav
+
 
 
 def load_and_clean_alyssa_sheet(dirctory, sheet_name, file_name='Notes_Behavior.xlsx'):
@@ -71,3 +74,62 @@ def pre_proccess(mouse_dir = "E:\\Unbiased\\GluA2\\Behavior data", mice_num=[24,
         t_end = time.time()
         print(f'Time elapsed: {t_end - t_start}')
 
+def get_sessions_with_offset(directory, start_offset, num_days):
+    # List to store the filenames and their dates
+    sessions = []
+    
+    # Loop through the files in the given directory
+    for filename in os.listdir(directory):
+        if filename.startswith("Log") and filename.endswith(".pkl"):
+            # Extract the date and session number from the filename
+            parts = filename.split()
+            date_str = parts[2]
+            session_date = datetime.strptime(date_str, "%Y-%m-%d")
+            session_number = parts[-1].split('.')[0]
+            
+            # Append the filename, date, and session number to the list
+            sessions.append((filename, session_date, session_number))
+    
+    # Sort the sessions by date
+    sessions.sort(key=lambda x: x[1])
+    
+    # Get unique dates
+    unique_dates = sorted(set(date for _, date, _ in sessions))
+    
+    # Determine the start and end dates based on the offset and number of days
+    if start_offset >= len(unique_dates):
+        return {}  # If the offset is out of range, return an empty dict
+    
+    start_index = max(0, len(unique_dates) - start_offset - num_days)
+    end_index = len(unique_dates) - start_offset
+    
+    start_date = unique_dates[start_index]
+    end_date = unique_dates[end_index - 1] + timedelta(days=1)  # Include the end date
+    
+    # Filter sessions within the date range and store in a dictionary
+    filtered_sessions = {}
+    for filename, date, session_number in sessions:
+        if start_date <= date < end_date:
+            filtered_sessions[filename] = {
+                'date': date.strftime("%Y-%m-%d") + '-' + str(session_number)
+            }
+    
+    return filtered_sessions
+
+def load_sessions_data(sessions, directory):
+    # Dictionary to store the loaded data
+    loaded_data = {}
+    
+    # Loop through the sessions dictionary
+    for filename, session_name in sessions.items():
+        # Construct the full file path
+        file_path = os.path.join(directory, filename)
+        
+        # Load the pickle file
+        with open(file_path, 'rb') as file:
+            data = pickle.load(file)
+        
+        # Store the loaded data in the dictionary
+        loaded_data[session_name['date']] = data.task
+    
+    return loaded_data
