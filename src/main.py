@@ -1,7 +1,7 @@
 import os
 import argparse
 import logging
-from utils import read_h5_image, match_h5_files_by_channels, setup_logging
+from DELAT_utils import read_h5_image, match_h5_files_by_channels, setup_logging
 from registration import register_and_transform
 from stats import compute_region_stats
 from skimage import io

@@ -1,6 +1,6 @@
 import itk
 import os
-from utils import read_h5_image
+from DELAT_utils import read_h5_image
 
 # Combined function for registration and applying transforms
 def register_and_transform(fx, files, output_dir, param_files, logger):
