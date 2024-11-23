@@ -1,9 +1,9 @@
 import itk
 import os
-from DELAT_utils import read_h5_image
+from DELAT_utils import read_h5_image, flip_image
 
 # Combined function for registration and applying transforms
-def register_and_transform(fx, files, output_dir, param_files, logger):
+def register_and_transform(fx, files, output_dir, param_files, logger, flip_axes=None):
     num_cores = os.cpu_count()  
     itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(num_cores)
     logger.info(f"Register_and_transform started, set ITK to use {num_cores} threads.")
@@ -11,6 +11,10 @@ def register_and_transform(fx, files, output_dir, param_files, logger):
     # Step 1: Register ch0 (moving image) with the fixed image
     mv = read_h5_image(files['ch0'], 'Data')
     
+    # Flip the image if flip_axes is not empty
+    if flip_axes:
+        mv = flip_image(mv, axes=flip_axes)
+        logger.info(f"Flipped image {files['ch0']} along axes {flip_axes}")
     logger.info(f"Moving image read from  {files['ch0']}")
     # Create a new ParameterObject for registration
     parameter_object = itk.ParameterObject.New()
@@ -43,6 +47,12 @@ def register_and_transform(fx, files, output_dir, param_files, logger):
     for name, path in files.items():
         logger.info(f'Applying transform to {name}')
         moving_image = read_h5_image(path, 'Data')  # Read the image
+        
+        # Flip the image if flip_axes is not empty
+        if flip_axes:
+            moving_image = flip_image(moving_image, axes=flip_axes)
+            logger.info(f"Flipped image {path} along axes {flip_axes}")
+            
         itk_image = itk.image_from_array(moving_image)
         logger.info(f'Moving_image from {path} loaded and converted to itk')
         transformix_filter = itk.TransformixFilter.New(Input=itk_image, TransformParameterObject=parameter_object_transformix)

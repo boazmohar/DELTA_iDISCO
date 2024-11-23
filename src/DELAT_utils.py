@@ -2,7 +2,14 @@ import os
 import re
 import logging
 import h5py
+import numpy as np
 from collections import defaultdict
+
+
+def flip_image(image, axes):
+    for axis in axes:
+        image = np.flip(image, axis=axis)
+    return image
 
 # Function to read h5 files
 def read_h5_image(file_path, dataset_name, th=100):

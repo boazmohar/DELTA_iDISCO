@@ -1,6 +1,5 @@
 import os
 import argparse
-import logging
 from DELAT_utils import read_h5_image, match_h5_files_by_channels, setup_logging
 from registration import register_and_transform
 from stats import compute_region_stats
@@ -17,7 +16,7 @@ FUNCTION_MAP = {
     'max': np.max
 }
 
-def process_animal(animal, files, base_dir, fx, param_files, annotation_np, funcs, logger):
+def process_animal(animal, files, base_dir, fx, param_files, annotation_np, funcs, logger, flip_axes):
     """
     Process a single animal by:
     - Registering and transforming the images
@@ -30,7 +29,7 @@ def process_animal(animal, files, base_dir, fx, param_files, annotation_np, func
 
     # Step 1: Register and Transform
     logger.info(f"Starting registration and transformation for {animal}.")
-    register_and_transform(fx, files, output_dir, param_files, logger)
+    register_and_transform(fx, files, output_dir, param_files, logger, flip_axes)
     logger.info(f"Finished registration and transformation for {animal}.")
 
     # Step 2: Compute Region Statistics
@@ -56,10 +55,13 @@ if __name__ == "__main__":
     parser.add_argument('--annotation_np', type=str, default='/nrs/spruston/Boaz/I2/annotatin10_hemi.tif', 
                         help="Path to the annotation volume file in TIFF format")
     
-    # New argument: List of functions to compute
+    # List of functions to compute
     parser.add_argument('--functions', type=str, nargs='+', default=['mean', 'median', 'std'],
                         help="List of statistical functions to compute. Options: mean, median, std, min, max")
 
+    # Flip flags for each image channel
+    parser.add_argument('--flip_axes', type=int, nargs='*', default=[], 
+                        help="List of axes to flip the images along. Example: --flip_axes 1 2")
     args = parser.parse_args()
 
     # Setup logging specific to this animal, logging to both file and console
@@ -103,8 +105,7 @@ if __name__ == "__main__":
         if not funcs:
             logger.error("No valid functions specified. Exiting.")
             exit(1)
-
         # Process the animal
-        process_animal(animal, files, args.base_dir, fx, param_files, annotation_np, funcs, logger)
+        process_animal(animal, files, args.base_dir, fx, param_files, annotation_np, funcs, logger, args.flip_axes)
 
     logger.info(f"Processing completed for {animal}.")
