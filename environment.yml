@@ -12,3 +12,5 @@ dependencies:
   - pip:
     - itk
     - itk-elastix
+    - pirt
+    - tqdm
