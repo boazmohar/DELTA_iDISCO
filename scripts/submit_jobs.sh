@@ -4,10 +4,10 @@
 # Script to submit registration and analysis jobs for each animal using bsub
 
 # Default paths for the base directory, atlas (fx), parameter files, and annotation volume
-BASE_DIR='/nrs/spruston/Boaz/I2/2024-09-19_iDISCO_CalibrationBrains'
-FX='/nrs/spruston/Boaz/I2/atlas10_hemi.tif'
-PARAM_FILES_DIR='/nrs/spruston/Boaz/I2/itk'
-ANNOTATION_NP='/nrs/spruston/Boaz/I2/annotatin10_hemi.tif'
+BASE_DIR='/nearline/spruston/Boaz/DELTA/I2/2024-09-19_iDISCO_CalibrationBrains'
+FX='/nearline/spruston/Boaz/DELTA/I2/atlas10_hemi.tif'
+PARAM_FILES_DIR='/nearline/spruston/Boaz/DELTA/I2/itk'
+ANNOTATION_NP='/nearline/spruston/Boaz/DELTA/I2/annotatin10_hemi.tif'
 
 # Path to the main Python script
 PYTHON_SCRIPT='/path/to/DELTA_iDISCO/src/main.py'

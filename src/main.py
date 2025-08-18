@@ -46,13 +46,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process an animal for registration and analysis.")
     
     parser.add_argument('--animal', type=str, required=True, help="Animal name (e.g., ANM550749_left_JF552)")
-    parser.add_argument('--base_dir', type=str, default='/nrs/spruston/Boaz/I2/2024-09-19_iDISCO_CalibrationBrains',
+    parser.add_argument('--base_dir', type=str, default='/nearline/spruston/Boaz/DELTA/I2/2024-09-19_iDISCO_CalibrationBrains',
                         help="Base directory where animal data is stored")
-    parser.add_argument('--fx', type=str, default='/nrs/spruston/Boaz/I2/atlas10_hemi.tif', 
+    parser.add_argument('--fx', type=str, default='/nearline/spruston/Boaz/DELTA/I2/atlas10_hemi.tif', 
                         help="Path to the atlas fixed image (fx) in TIFF format")
-    parser.add_argument('--param_files_dir', type=str, default='/nrs/spruston/Boaz/I2/itk', 
+    parser.add_argument('--param_files_dir', type=str, default='/nearline/spruston/Boaz/DELTA/I2/itk', 
                         help="Directory containing the parameter files for registration")
-    parser.add_argument('--annotation_np', type=str, default='/nrs/spruston/Boaz/I2/annotatin10_hemi.tif', 
+    parser.add_argument('--annotation_np', type=str, default='/nearline/spruston/Boaz/DELTA/I2/annotation_10_hemi.nii', 
                         help="Path to the annotation volume file in TIFF format")
     
     # List of functions to compute

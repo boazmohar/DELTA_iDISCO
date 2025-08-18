@@ -54,7 +54,7 @@ def parse_args():
                         help='Path to the CCF atlas reference image')
     parser.add_argument('--annotation_path', type=str, required=True,
                         help='Path to the CCF annotation volume')
-    parser.add_argument('--param_files_dir', type=str, default='/nrs/spruston/Boaz/I2/itk',
+    parser.add_argument('--param_files_dir', type=str, default='/nearline/spruston/Boaz/DELTA/I2/itk',
                         help='Directory containing the ITK parameter files')
     
     return parser.parse_args()
