@@ -27,6 +27,7 @@ from pathlib import Path
 import pandas as pd
 import argparse
 from scipy import ndimage
+from skimage import transform
 import multiprocessing
 from functools import partial
 import time
@@ -81,7 +82,7 @@ def get_best_parameters(param_scan_results_path):
                      key=lambda x: x['metrics']['mean_cc'] if 'metrics' in x else -1)
     
     # Extract downscale factor used in the scan
-    downscale_factor = scan_results.get('downscale', 0.1)
+    downscale_factor = scan_results.get('downscale', 0.2)
     
     logger.info(f"Best parameters found: {best_result['parameters']}")
     logger.info(f"Metrics: mean_cc={best_result['metrics']['mean_cc']:.4f}, mean_mse={best_result['metrics']['mean_mse']:.4f}")
@@ -199,12 +200,13 @@ def resize_fields_parallel(deform_fields_dir, animal_id, ccf_shape, output_dir, 
     
     # If we have any fields to resize
     if field_data:
-        # Create partial function with fixed arguments
-        resize_func = partial(resize_field_for_shape, target_shape=ccf_shape, logger=logger)
+        # Create partial function with fixed arguments - don't include target_shape here 
+        # since it will be passed as an argument
+        resize_func = partial(resize_field_for_shape, logger=logger)
         
-        # Set up arguments for each field
+        # Set up arguments for each field, including target_shape
         args = [
-            (field, path, out_path) 
+            (field, ccf_shape, path, out_path) 
             for field, path, out_path in zip(field_data, deform_paths, output_paths[-len(field_data):])  # Only process fields that need resizing
         ]
         
@@ -289,18 +291,56 @@ def create_ch0_template(transformed_channel_images, logger):
     
     for animal_id, channels in transformed_channel_images.items():
         if channel in channels:
-            channel_images.append(channels[channel])
+            # Convert to numpy array to avoid pirt sampling issues
+            image = channels[channel]
+            if not isinstance(image, np.ndarray):
+                try:
+                    image = np.asarray(image)
+                    logger.info(f"Converted {animal_id} {channel} image to numpy array, shape: {image.shape}")
+                except Exception as e:
+                    logger.error(f"Error converting {animal_id} {channel} image to numpy array: {str(e)}")
+                    continue
+            channel_images.append(image)
     
     if not channel_images:
         logger.error(f"No {channel} images found to create template")
         return None
-        
-    # Stack and average
-    image_stack = np.stack(channel_images)
-    ch0_template = np.mean(image_stack, axis=0)
-    logger.info(f"Created template for {channel}, shape: {ch0_template.shape}")
     
-    return ch0_template
+    # Log details about each image before stacking
+    for i, img in enumerate(channel_images):
+        logger.info(f"Image {i} type: {type(img)}, shape: {img.shape}, dtype: {img.dtype}")
+    
+    try:
+        # Stack and average
+        image_stack = np.stack(channel_images)
+        ch0_template = np.mean(image_stack, axis=0)
+        logger.info(f"Created template for {channel}, shape: {ch0_template.shape}")
+        return ch0_template
+    except Exception as e:
+        logger.error(f"Error creating template: {str(e)}")
+        
+        # Try alternative approach
+        logger.info("Trying alternative approach with array conversion")
+        try:
+            # Try to convert all images to arrays with the same shape
+            first_shape = channel_images[0].shape
+            converted_images = []
+            
+            for img in channel_images:
+                if img.shape != first_shape:
+                    logger.warning(f"Image shape mismatch: expected {first_shape}, got {img.shape}")
+                    # Resize to match the first image
+                    img = transform.resize(img, first_shape, anti_aliasing=True, preserve_range=True)
+                converted_images.append(np.array(img, dtype=np.float32))
+            
+            # Stack and average
+            image_stack = np.stack(converted_images)
+            ch0_template = np.mean(image_stack, axis=0)
+            logger.info(f"Created template (alternative method) for {channel}, shape: {ch0_template.shape}")
+            return ch0_template
+        except Exception as e2:
+            logger.error(f"Alternative approach also failed: {str(e2)}")
+            return None
 
 
 def register_template_to_ccf(template, ccf_atlas, param_files, output_dir, logger):
@@ -329,18 +369,50 @@ def register_template_to_ccf(template, ccf_atlas, param_files, output_dir, logge
     logger.info(f"Loading CCF atlas from {ccf_atlas}")
     fx = itk.imread(ccf_atlas, pixel_type=itk.US)
     
-    # Create files dictionary in the format expected by register_and_transform
-    files = {
-        'ch0': template_path,
-    }
-    
-    # Use the existing registration function
+    # Instead of using register_and_transform which expects HDF5 files,
+    # we'll implement a similar workflow directly for TIFF files
     logger.info("Registering template to CCF atlas")
-    register_and_transform(fx, files, ccf_reg_dir, param_files, logger)
     
-    logger.info(f"Template registered to CCF atlas. Results saved to {ccf_reg_dir}")
-    
-    return ccf_reg_dir, files
+    # Load the template as an ITK image
+    try:
+        # Load the template with ITK instead of using read_h5_image
+        logger.info(f"Loading template from {template_path}")
+        mv = itk.imread(template_path, pixel_type=itk.F)
+        
+        # Create a new ParameterObject for registration
+        parameter_object = itk.ParameterObject.New()
+        for p in param_files:
+            if os.path.exists(p):
+                parameter_object.AddParameterFile(p)
+                logger.info(f"Added parameter file: {p}")
+            else:
+                logger.warning(f"Parameter file not found: {p}")
+        
+        # Perform registration
+        logger.info("Starting elastix registration")
+        res, params = itk.elastix_registration_method(
+            fx, mv, parameter_object, 
+            log_to_file=True, 
+            output_directory=ccf_reg_dir
+        )
+        logger.info(f"Registration completed, result saved to {ccf_reg_dir}")
+        
+        # Also save the transformed template
+        output_image_path = os.path.join(ccf_reg_dir, 'ch0_template_ccf_aligned.tif')
+        itk.imwrite(res, output_image_path)
+        logger.info(f"Transformed template saved to {output_image_path}")
+        
+        # Create dictionary of output files
+        files = {
+            'ch0': template_path,
+            'ch0_ccf_aligned': output_image_path
+        }
+        
+        return ccf_reg_dir, files
+    except Exception as e:
+        logger.error(f"Error in CCF registration: {str(e)}")
+        # Return what we have so far
+        return ccf_reg_dir, {'ch0': template_path}
 
 
 def extract_region_statistics(ccf_aligned_dir, animal_ids, annotation_path, output_dir, logger):
@@ -379,40 +451,212 @@ def extract_region_statistics(ccf_aligned_dir, animal_ids, annotation_path, outp
             
         logger.info(f"Extracting region statistics for {animal_id}")
         
-        # Prepare channel files dict in the format expected by compute_region_stats
-        channel_files = {}
-        for channel in ['ch0', 'ch1', 'ch2']:
-            channel_path = os.path.join(animal_dir, f"{channel}_ccf_aligned.tif")
-            if os.path.exists(channel_path):
-                channel_files[channel] = channel_path
-        
-        if not channel_files:
-            logger.warning(f"No channel files found for {animal_id}")
-            continue
-            
-        # Compute region statistics
-        num_cores = os.cpu_count()
+        # Create a directory for this animal's stats
         animal_stats_dir = os.path.join(stats_dir, animal_id)
         os.makedirs(animal_stats_dir, exist_ok=True)
         
-        df_stats = compute_region_stats(channel_files, animal_stats_dir, annotation_np, funcs, num_cores)
-        
-        # Save to CSV
-        stats_path = os.path.join(stats_dir, f"{animal_id}_region_stats.csv")
-        df_stats.to_csv(stats_path, index=False)
-        
-        all_stats[animal_id] = df_stats
-        logger.info(f"Region statistics saved to {stats_path}")
+        # First copy or link the aligned files to the animal_stats_dir with simple names
+        # that will work with the compute_region_stats function
+        try:
+            # Prepare channel files dict with simplified names
+            channel_files = {}
+            for channel in ['ch0', 'ch1', 'ch2']:
+                source_path = os.path.join(animal_dir, f"{channel}_ccf_aligned.tif")
+                if os.path.exists(source_path):
+                    # Create a local copy or link in animal_stats_dir
+                    local_path = os.path.join(animal_stats_dir, f"{channel}.tif")
+                    if not os.path.exists(local_path):
+                        try:
+                            # Try to create a symbolic link first
+                            os.symlink(source_path, local_path)
+                            logger.info(f"Created symlink from {source_path} to {local_path}")
+                        except Exception as e:
+                            logger.warning(f"Error creating symlink: {str(e)}, will try copying")
+                            # If symlink fails, copy the file
+                            import shutil
+                            shutil.copy2(source_path, local_path)
+                            logger.info(f"Copied file from {source_path} to {local_path}")
+                    
+                    # Add to channel_files dict with just the channel name (compute_region_stats will add .tif)
+                    channel_files[channel] = channel
+                    logger.info(f"Added channel {channel} for {animal_id}")
+            
+            if not channel_files:
+                logger.warning(f"No channel files found for {animal_id}")
+                continue
+                
+            # Compute region statistics
+            num_cores = os.cpu_count()
+            logger.info(f"Starting compute_region_stats for {animal_id} with {num_cores} cores")
+            
+            try:
+                df_stats = compute_region_stats(channel_files, animal_stats_dir, annotation_np, funcs, num_cores)
+                
+                # Save to CSV
+                stats_path = os.path.join(stats_dir, f"{animal_id}_region_stats.csv")
+                df_stats.to_csv(stats_path, index=False)
+                
+                all_stats[animal_id] = df_stats
+                logger.info(f"Region statistics saved to {stats_path}")
+            except Exception as e:
+                logger.error(f"Error computing region statistics for {animal_id}: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+        except Exception as e:
+            logger.error(f"Error preparing files for {animal_id}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
     
-    # Create combined statistics
+    # Create combined statistics if we have any results
     if all_stats:
-        combined_stats = pd.concat(all_stats.values(), keys=all_stats.keys())
-        combined_path = os.path.join(stats_dir, "all_animals_region_stats.csv")
-        combined_stats.to_csv(combined_path)
-        logger.info(f"Combined statistics saved to {combined_path}")
+        try:
+            combined_stats = pd.concat(all_stats.values(), keys=all_stats.keys())
+            combined_path = os.path.join(stats_dir, "all_animals_region_stats.csv")
+            combined_stats.to_csv(combined_path)
+            logger.info(f"Combined statistics saved to {combined_path}")
+        except Exception as e:
+            logger.error(f"Error creating combined statistics: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     return all_stats
 
+
+def check_stage_completion(output_dir, stage_name, logger):
+    """
+    Check if a processing stage has been completed
+    
+    Args:
+        output_dir (str): Base output directory
+        stage_name (str): Name of the stage to check
+        logger: Logger object
+        
+    Returns:
+        tuple: (is_completed, data)
+            is_completed (bool): Whether the stage is completed
+            data: Stage-specific data if available
+    """
+    if stage_name == "transformed_images":
+        # Check if transformed images directory exists and has content
+        transformed_dir = os.path.join(output_dir, 'transformed_images')
+        if os.path.exists(transformed_dir):
+            # Check if there are animal subdirectories with transformed files
+            animal_dirs = [d for d in os.listdir(transformed_dir) if os.path.isdir(os.path.join(transformed_dir, d))]
+            if animal_dirs:
+                logger.info(f"Found {len(animal_dirs)} animals with transformed images")
+                
+                # Load transformed images
+                transformed_channel_images = {}
+                for animal_id in animal_dirs:
+                    animal_dir = os.path.join(transformed_dir, animal_id)
+                    animal_channels = {}
+                    for channel in ['ch0', 'ch1', 'ch2']:
+                        channel_path = os.path.join(animal_dir, f"{channel}_transformed.tif")
+                        if os.path.exists(channel_path):
+                            try:
+                                animal_channels[channel] = tifffile.imread(channel_path)
+                                logger.info(f"Loaded transformed {channel} for {animal_id}")
+                            except Exception as e:
+                                logger.warning(f"Error loading transformed {channel} for {animal_id}: {str(e)}")
+                    
+                    if animal_channels:
+                        transformed_channel_images[animal_id] = animal_channels
+                
+                if transformed_channel_images:
+                    return True, transformed_channel_images
+        
+        return False, None
+    
+    elif stage_name == "ch0_template":
+        # Check if ch0 template exists
+        templates_dir = os.path.join(output_dir, 'templates')
+        template_path = os.path.join(templates_dir, "ch0_template.tif")
+        if os.path.exists(template_path):
+            try:
+                ch0_template = tifffile.imread(template_path)
+                logger.info(f"Found existing ch0 template: {template_path}")
+                return True, ch0_template
+            except Exception as e:
+                logger.warning(f"Error loading ch0 template: {str(e)}")
+        
+        return False, None
+    
+    elif stage_name == "ccf_registration":
+        # Check if CCF registration directory exists and has transform parameters
+        ccf_reg_dir = os.path.join(output_dir, 'ccf_registration')
+        if os.path.exists(ccf_reg_dir):
+            # Check if there are transform parameters files
+            param_files = [f for f in os.listdir(ccf_reg_dir) if f.startswith("TransformParameters")]
+            if param_files:
+                logger.info(f"Found {len(param_files)} transform parameter files in {ccf_reg_dir}")
+                
+                # Create transformix parameter object
+                transformix_params = itk.ParameterObject.New()
+                has_params = False
+                for i in range(4):  # There are typically 4 transform parameters files
+                    param_path = os.path.join(ccf_reg_dir, f'TransformParameters.{i}.txt')
+                    if os.path.exists(param_path):
+                        transformix_params.AddParameterFile(param_path)
+                        logger.info(f"Added transform parameter file: {param_path}")
+                        has_params = True
+                
+                if has_params:
+                    return True, (ccf_reg_dir, transformix_params)
+        
+        return False, None
+    
+    elif stage_name == "ccf_aligned_images":
+        # Check if CCF aligned images directory exists and has content
+        ccf_aligned_dir = os.path.join(output_dir, 'ccf_aligned_images')
+        if os.path.exists(ccf_aligned_dir):
+            # Check if there are animal subdirectories with aligned files
+            animal_dirs = [d for d in os.listdir(ccf_aligned_dir) if os.path.isdir(os.path.join(ccf_aligned_dir, d))]
+            if animal_dirs:
+                logger.info(f"Found {len(animal_dirs)} animals with CCF-aligned images")
+                
+                # Check which animals have been fully processed
+                completed_animals = []
+                for animal_id in animal_dirs:
+                    animal_dir = os.path.join(ccf_aligned_dir, animal_id)
+                    # Check if all channels are present
+                    all_channels_present = True
+                    for channel in ['ch0', 'ch1', 'ch2']:
+                        channel_path = os.path.join(animal_dir, f"{channel}_ccf_aligned.tif")
+                        if not os.path.exists(channel_path):
+                            all_channels_present = False
+                            break
+                    
+                    if all_channels_present:
+                        completed_animals.append(animal_id)
+                
+                if completed_animals:
+                    logger.info(f"Found {len(completed_animals)} animals with complete CCF alignment")
+                    return True, completed_animals
+        
+        return False, None
+    
+    elif stage_name == "region_stats":
+        # Check if region stats directory exists and has content
+        stats_dir = os.path.join(output_dir, 'region_stats')
+        if os.path.exists(stats_dir):
+            # Check if there are individual animal stats files
+            stats_files = [f for f in os.listdir(stats_dir) if f.endswith('_region_stats.csv')]
+            if stats_files:
+                # Extract animal IDs from filenames
+                completed_animals = [f.split('_region_stats.csv')[0] for f in stats_files]
+                logger.info(f"Found region statistics for {len(completed_animals)} animals")
+                
+                # Check if combined stats file exists
+                combined_path = os.path.join(stats_dir, "all_animals_region_stats.csv")
+                has_combined = os.path.exists(combined_path)
+                
+                return True, (completed_animals, has_combined)
+        
+        return False, None
+    
+    # Unknown stage
+    logger.warning(f"Unknown stage: {stage_name}")
+    return False, None
 
 def main():
     """Main function to execute the optimal registration workflow"""
@@ -420,6 +664,9 @@ def main():
     
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Set up a status file to track progress
+    status_file = os.path.join(args.output_dir, 'pipeline_status.json')
     
     # 1. Get best parameters from scan results
     best_param_set, downscale_factor, logger = get_best_parameters(args.param_scan_results)
@@ -455,119 +702,223 @@ def main():
     
     logger.info(f"Found {len(animal_ids)} animals with deformation fields: {animal_ids}")
     
-    # 2. Load all channel TIF images
-    channel_images = load_channel_tif_images(args.data_dir, animal_ids, logger)
+    # Initialize variables for pipeline stages
+    transformed_channel_images = None
+    ch0_template = None
+    ccf_reg_data = None
     
-    # 3. Apply transforms to all channel images
-    transformed_channel_images = {}
-    transformed_dir = os.path.join(args.output_dir, 'transformed_images')
-    os.makedirs(transformed_dir, exist_ok=True)
-    
-    for animal_id, images in channel_images.items():
-        logger.info(f"Processing animal: {animal_id}")
-        transformed_channels = apply_transform_to_channel_images(
-            images, deform_fields_dir, animal_id, logger)
+    # 2-3. Check if transformed images already exist
+    transformed_complete, transformed_data = check_stage_completion(args.output_dir, "transformed_images", logger)
+    if transformed_complete:
+        logger.info("Resuming from existing transformed images")
+        transformed_channel_images = transformed_data
+    else:
+        # 2. Load all channel TIF images
+        channel_images = load_channel_tif_images(args.data_dir, animal_ids, logger)
         
-        if transformed_channels:
-            transformed_channel_images[animal_id] = transformed_channels
+        # 3. Apply transforms to all channel images
+        transformed_channel_images = {}
+        transformed_dir = os.path.join(args.output_dir, 'transformed_images')
+        os.makedirs(transformed_dir, exist_ok=True)
+        
+        for animal_id, images in channel_images.items():
+            logger.info(f"Processing animal: {animal_id}")
+            transformed_channels = apply_transform_to_channel_images(
+                images, deform_fields_dir, animal_id, logger)
             
-            # Save transformed channel images
-            animal_dir = os.path.join(transformed_dir, animal_id)
-            os.makedirs(animal_dir, exist_ok=True)
-            
-            for channel, transformed_image in transformed_channels.items():
-                output_path = os.path.join(animal_dir, f"{channel}_transformed.tif")
+            if transformed_channels:
+                transformed_channel_images[animal_id] = transformed_channels
                 
-                # Save with metadata
-                tifffile.imwrite(output_path, transformed_image, metadata={
-                    'downscale_factor': downscale_factor,
-                    'original_shape': str(images[channel].shape),
-                    'transform_params': str(best_param_set['parameters']),
-                    'processing_date': datetime.now().isoformat()
-                })
+                # Save transformed channel images
+                animal_dir = os.path.join(transformed_dir, animal_id)
+                os.makedirs(animal_dir, exist_ok=True)
                 
-                logger.info(f"Saved transformed {channel} to {output_path}")
+                for channel, transformed_image in transformed_channels.items():
+                    output_path = os.path.join(animal_dir, f"{channel}_transformed.tif")
+                    
+                    # Save with metadata
+                    tifffile.imwrite(output_path, transformed_image, metadata={
+                        'downscale_factor': downscale_factor,
+                        'original_shape': str(images[channel].shape),
+                        'transform_params': str(best_param_set['parameters']),
+                        'processing_date': datetime.now().isoformat()
+                    })
+                    
+                    logger.info(f"Saved transformed {channel} to {output_path}")
     
-    # 4. Create ch0 template
-    ch0_template = create_ch0_template(transformed_channel_images, logger)
-    if ch0_template is None:
-        logger.error("Error: Failed to create ch0 template")
+    if not transformed_channel_images:
+        logger.error("No transformed channel images available")
         return 1
+    
+    # 4. Check if ch0 template already exists
+    template_complete, template_data = check_stage_completion(args.output_dir, "ch0_template", logger)
+    if template_complete:
+        logger.info("Resuming from existing ch0 template")
+        ch0_template = template_data
+    else:
+        # Create ch0 template
+        ch0_template = create_ch0_template(transformed_channel_images, logger)
+        if ch0_template is None:
+            logger.error("Error: Failed to create ch0 template")
+            return 1
+            
+        # Save the ch0 template
+        templates_dir = os.path.join(args.output_dir, 'templates')
+        os.makedirs(templates_dir, exist_ok=True)
         
-    # Save the ch0 template
-    templates_dir = os.path.join(args.output_dir, 'templates')
-    os.makedirs(templates_dir, exist_ok=True)
+        template_path = os.path.join(templates_dir, "ch0_template.tif")
+        tifffile.imwrite(template_path, ch0_template)
+        logger.info(f"Saved ch0 template to {template_path}")
     
-    template_path = os.path.join(templates_dir, "ch0_template.tif")
-    tifffile.imwrite(template_path, ch0_template)
-    logger.info(f"Saved ch0 template to {template_path}")
+    # 5. Check if CCF registration already exists
+    ccf_reg_complete, ccf_reg_data = check_stage_completion(args.output_dir, "ccf_registration", logger)
+    if ccf_reg_complete:
+        logger.info("Resuming from existing CCF registration")
+        ccf_reg_dir, transformix_params = ccf_reg_data
+    else:
+        # Register ch0 template to CCF atlas
+        # Load ITK parameter files
+        param_files = [
+            os.path.join(args.param_files_dir, 'Order1_Par0000affine.txt'),
+            os.path.join(args.param_files_dir, 'Order3_Par0000bspline.txt'),
+            os.path.join(args.param_files_dir, 'Order4_Par0000bspline.txt'),
+            os.path.join(args.param_files_dir, 'Order5_Par0000bspline.txt')
+        ]
+        
+        ccf_reg_dir, template_files = register_template_to_ccf(
+            ch0_template, args.ccf_atlas, param_files, args.output_dir, logger)
+        
+        # Create transformix parameter object for reuse
+        transformix_params = itk.ParameterObject.New()
+        has_params = False
+        for i in range(4):  # There are typically 4 transform parameters files
+            param_path = os.path.join(ccf_reg_dir, f'TransformParameters.{i}.txt')
+            if os.path.exists(param_path):
+                transformix_params.AddParameterFile(param_path)
+                logger.info(f"Added transform parameter file: {param_path}")
+                has_params = True
+        
+        if not has_params:
+            logger.error("No transform parameter files found! Cannot apply CCF alignment to animal images.")
+            return 1
     
-    # 5. Register ch0 template to CCF atlas
+    # 6. Check if CCF-aligned images already exist
+    ccf_aligned_complete, ccf_aligned_data = check_stage_completion(args.output_dir, "ccf_aligned_images", logger)
+    completed_animals = ccf_aligned_data if ccf_aligned_complete else []
     
-    # Load ITK parameter files
-    param_files = [
-        os.path.join(args.param_files_dir, 'Order1_Par0000affine.txt'),
-        os.path.join(args.param_files_dir, 'Order3_Par0000bspline.txt'),
-        os.path.join(args.param_files_dir, 'Order4_Par0000bspline.txt'),
-        os.path.join(args.param_files_dir, 'Order5_Par0000bspline.txt')
-    ]
-    
-    ccf_reg_dir, template_files = register_template_to_ccf(
-        ch0_template, args.ccf_atlas, param_files, args.output_dir, logger)
-    
-    # We only need to register the ch0 template to CCF
-    # No need to register other channel templates
-    
-    # 7. Apply same transform to all animal channel images
+    # 7. Apply CCF transform to remaining animal channel images
     ccf_aligned_dir = os.path.join(args.output_dir, 'ccf_aligned_images')
     os.makedirs(ccf_aligned_dir, exist_ok=True)
     
-    # Create transformix parameter object for reuse
-    transformix_params = itk.ParameterObject.New()
-    for i in range(4):  # There are typically 4 transform parameters files
-        param_path = os.path.join(ccf_reg_dir, f'TransformParameters.{i}.txt')
-        if os.path.exists(param_path):
-            transformix_params.AddParameterFile(param_path)
-            logger.info(f"Added transform parameter file: {param_path}")
+    # Process animals that haven't been fully CCF-aligned yet
+    animals_to_process = [animal_id for animal_id in animal_ids if animal_id not in completed_animals]
     
-    # Apply transform to each animal's channel images
-    for animal_id, channels in transformed_channel_images.items():
-        animal_dir = os.path.join(ccf_aligned_dir, animal_id)
-        os.makedirs(animal_dir, exist_ok=True)
+    if animals_to_process:
+        logger.info(f"Applying CCF alignment to {len(animals_to_process)} animals")
         
-        for channel, image in channels.items():
-            logger.info(f"Applying CCF transform to {animal_id} {channel}")
+        for animal_id in animals_to_process:
+            if animal_id not in transformed_channel_images:
+                logger.warning(f"No transformed images found for {animal_id}, skipping CCF alignment")
+                continue
+                
+            channels = transformed_channel_images[animal_id]
+            animal_dir = os.path.join(ccf_aligned_dir, animal_id)
+            os.makedirs(animal_dir, exist_ok=True)
             
-            # Save image to temporary file
-            temp_path = os.path.join(ccf_reg_dir, f"temp_{animal_id}_{channel}.tif")
-            tifffile.imwrite(temp_path, image)
-            
-            # Read image with ITK
-            itk_image = itk.imread(temp_path, pixel_type=itk.F)
-            
-            # Apply transform
-            transformix_filter = itk.TransformixFilter.New(
-                Input=itk_image, 
-                TransformParameterObject=transformix_params
-            )
-            transformix_filter.SetComputeSpatialJacobian(False)
-            transformix_filter.SetComputeDeterminantOfSpatialJacobian(False)
-            transformix_filter.SetComputeDeformationField(False)
-            transformix_filter.Update()
-            
-            # Get and save result
-            result = transformix_filter.GetOutput()
-            output_path = os.path.join(animal_dir, f"{channel}_ccf_aligned.tif")
-            itk.imwrite(result, output_path)
-            
-            # Clean up temporary file
-            os.remove(temp_path)
-            
-            logger.info(f"Saved CCF-aligned {channel} to {output_path}")
+            for channel, image in channels.items():
+                # Check if this channel is already aligned
+                output_path = os.path.join(animal_dir, f"{channel}_ccf_aligned.tif")
+                if os.path.exists(output_path):
+                    logger.info(f"CCF-aligned {channel} already exists for {animal_id}, skipping")
+                    continue
+                    
+                try:
+                    logger.info(f"Applying CCF transform to {animal_id} {channel}")
+                    
+                    # Make sure image is a numpy array
+                    if not isinstance(image, np.ndarray):
+                        logger.info(f"Converting {animal_id} {channel} to numpy array")
+                        image = np.asarray(image)
+                    
+                    # Save image to temporary file
+                    temp_path = os.path.join(ccf_reg_dir, f"temp_{animal_id}_{channel}.tif")
+                    tifffile.imwrite(temp_path, image)
+                    logger.info(f"Saved temporary file: {temp_path}")
+                    
+                    # Read image with ITK
+                    itk_image = itk.imread(temp_path, pixel_type=itk.F)
+                    logger.info(f"Loaded ITK image from {temp_path}")
+                    
+                    # Apply transform
+                    transformix_filter = itk.TransformixFilter.New(
+                        Input=itk_image, 
+                        TransformParameterObject=transformix_params
+                    )
+                    transformix_filter.SetComputeSpatialJacobian(False)
+                    transformix_filter.SetComputeDeterminantOfSpatialJacobian(False)
+                    transformix_filter.SetComputeDeformationField(False)
+                    logger.info(f"Starting transformix for {animal_id} {channel}")
+                    transformix_filter.Update()
+                    logger.info(f"Transformix completed for {animal_id} {channel}")
+                    
+                    # Get and save result
+                    result = transformix_filter.GetOutput()
+                    itk.imwrite(result, output_path)
+                    
+                    # Clean up temporary file
+                    try:
+                        os.remove(temp_path)
+                    except Exception as e:
+                        logger.warning(f"Error removing temporary file {temp_path}: {str(e)}")
+                    
+                    logger.info(f"Saved CCF-aligned {channel} to {output_path}")
+                except Exception as e:
+                    logger.error(f"Error applying CCF transform to {animal_id} {channel}: {str(e)}")
+                    continue
+    else:
+        logger.info("All animals already have CCF-aligned images")
     
-    # 8. Extract region statistics
-    all_stats = extract_region_statistics(
-        ccf_aligned_dir, animal_ids, args.annotation_path, args.output_dir, logger)
+    # 8. Check which animals have region statistics
+    stats_complete, stats_data = check_stage_completion(args.output_dir, "region_stats", logger)
+    completed_stats = stats_data[0] if stats_complete else []
+    
+    # Filter animals for stats computation
+    animals_for_stats = [animal_id for animal_id in animal_ids if animal_id not in completed_stats]
+    
+    if animals_for_stats:
+        logger.info(f"Computing region statistics for {len(animals_for_stats)} animals")
+        # Extract region statistics for remaining animals
+        all_stats = extract_region_statistics(
+            ccf_aligned_dir, animals_for_stats, args.annotation_path, args.output_dir, logger)
+    else:
+        logger.info("All animals already have region statistics")
+    
+    # Save pipeline status
+    try:
+        status = {
+            'timestamp': datetime.now().isoformat(),
+            'param_str': param_str,
+            'downscale_factor': downscale_factor,
+            'stages': {
+                'transformed_images': transformed_complete,
+                'ch0_template': template_complete,
+                'ccf_registration': ccf_reg_complete,
+                'ccf_aligned_images': ccf_aligned_complete,
+                'region_stats': stats_complete
+            },
+            'animals': {
+                'total': len(animal_ids),
+                'ccf_aligned': len(completed_animals),
+                'stats_computed': len(completed_stats)
+            }
+        }
+        
+        with open(status_file, 'w') as f:
+            json.dump(status, f, indent=2)
+        
+        logger.info(f"Pipeline status saved to {status_file}")
+    except Exception as e:
+        logger.error(f"Error saving pipeline status: {str(e)}")
     
     logger.info(f"Optimal registration process completed. Results saved to {args.output_dir}")
     

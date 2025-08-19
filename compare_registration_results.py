@@ -42,8 +42,8 @@ def parse_args():
                        help='Path to the directory containing original brain images')
     parser.add_argument('--output_dir', type=str, default=None,
                        help='Path to the output directory for comparison results (default: results_dir/comparison)')
-    parser.add_argument('--downscale', type=float, default=0.1,
-                       help='Factor to downscale images for faster processing (default: 0.1)')
+    parser.add_argument('--downscale', type=float, default=0.2,
+                       help='Factor to downscale images for faster processing (default: 0.2)')
     parser.add_argument('--create_baseline', action='store_true',
                        help='Create a baseline template from unregistered brains')
     
@@ -71,7 +71,7 @@ def find_brain_images(data_dir):
     
     return brain_images
 
-def load_and_preprocess_image(file_path, downscale_factor=0.1):
+def load_and_preprocess_image(file_path, downscale_factor=0.2):
     """Load and preprocess a 3D brain image
     
     Args:
@@ -99,7 +99,7 @@ def load_and_preprocess_image(file_path, downscale_factor=0.1):
     # Downscale if needed (this is crucial for 3D registration to be computationally feasible)
     if downscale_factor < 1.0:
         # Calculate new shape, preserving 3D structure
-        new_shape = (img.shape[0], 
+        new_shape = (int(img.shape[0] * downscale_factor), 
                      int(img.shape[1] * downscale_factor), 
                      int(img.shape[2] * downscale_factor))
         img = transform.resize(img, new_shape, anti_aliasing=True, preserve_range=True)
@@ -280,7 +280,21 @@ def collect_registration_results(results_dir):
     """
     print(f"Collecting registration results from {results_dir}...")
     
-    # If overall results not available, collect individual results
+    # Check for combined parameter_scan_results.json file first
+    param_scan_results_path = results_dir / 'parameter_scan_results.json'
+    if param_scan_results_path.exists():
+        print(f"Found parameter_scan_results.json, using it for all results")
+        try:
+            with open(param_scan_results_path, 'r') as f:
+                results = json.load(f)
+                print(f"Loaded {len(results.get('results', []))} results from parameter_scan_results.json")
+                return results
+        except json.JSONDecodeError:
+            print(f"Error loading {param_scan_results_path}, falling back to individual files")
+        except Exception as e:
+            print(f"Error processing {param_scan_results_path}: {str(e)}, falling back to individual files")
+    
+    # If parameter_scan_results.json is not available or has issues, collect individual results
     results = {'results': []}
     
     # Find all parameter directories
@@ -293,25 +307,36 @@ def collect_registration_results(results_dir):
             with open(result_path, 'r') as f:
                 try:
                     param_result = json.load(f)
-                    # Extract parameter information from directory name
-                    dir_name = param_dir.name
-                    parts = dir_name.split('_')
                     
-                    # Extract grid, scale, and speed values from directory name
-                    grid_factor = parts[0].replace('grid', '') if len(parts) > 0 else ''
-                    scale_factor = parts[1].replace('scale', '') if len(parts) > 1 else ''
-                    speed_factor = parts[2].replace('speed', '') if len(parts) > 2 else ''
+                    # Add output directory to result if not already present
+                    if 'output_dir' not in param_result:
+                        param_result['output_dir'] = str(param_dir)
                     
-                    # Add parameters to result if not already present
+                    # Make sure parameters are present
                     if 'parameters' not in param_result:
+                        # Extract parameter information from directory name
+                        dir_name = param_dir.name
+                        parts = dir_name.split('_')
+                        
+                        # Extract all parameter values from directory name
+                        grid_factor = parts[0].replace('grid', '') if len(parts) > 0 else ''
+                        scale_factor = parts[1].replace('scale', '') if len(parts) > 1 else ''
+                        speed_factor = parts[2].replace('speed', '') if len(parts) > 2 else ''
+                        final_scale = parts[3].replace('finalscale', '') if len(parts) > 3 else '1.0'
+                        scale_levels = parts[4].replace('levels', '') if len(parts) > 4 else '5'
+                        final_grid_sampling = parts[5].replace('finalgrid', '') if len(parts) > 5 else '16'
+                        noise_factor = parts[6].replace('noise', '') if len(parts) > 6 else '1.0'
+                        
                         param_result['parameters'] = {
-                            'grid_sampling_factor': int(grid_factor) if grid_factor.isdigit() else grid_factor,
+                            'grid_sampling_factor': float(grid_factor) if grid_factor.replace('.', '', 1).isdigit() else grid_factor,
                             'scale_sampling': int(scale_factor) if scale_factor.isdigit() else scale_factor,
-                            'speed_factor': int(speed_factor) if speed_factor.isdigit() else speed_factor
+                            'speed_factor': float(speed_factor) if speed_factor.replace('.', '', 1).isdigit() else speed_factor,
+                            'final_scale': float(final_scale) if final_scale.replace('.', '', 1).isdigit() else final_scale,
+                            'scale_levels': int(scale_levels) if scale_levels.isdigit() else scale_levels,
+                            'final_grid_sampling': float(final_grid_sampling) if final_grid_sampling.replace('.', '', 1).isdigit() else final_grid_sampling,
+                            'noise_factor': float(noise_factor) if noise_factor.replace('.', '', 1).isdigit() else noise_factor
                         }
                     
-                    # Add output directory to result
-                    param_result['output_dir'] = str(param_dir)
                     results['results'].append(param_result)
                 except json.JSONDecodeError:
                     print(f"Error loading results from {param_dir}, skipping")
@@ -339,18 +364,34 @@ def analyze_results(results, baseline_metrics=None):
     for result in results['results']:
         if 'parameters' in result:
             params = result['parameters']
-            # Look for metrics in either 'quality_metrics' or directly in result
-            metrics = result.get('quality_metrics', result)
             
-            # Skip if we can't find necessary metrics
-            if not all(key in metrics for key in ['mean_cc', 'mean_mse']):
+            # First check if metrics are in 'quality_metrics'
+            if 'quality_metrics' in result and isinstance(result['quality_metrics'], dict):
+                metrics = result['quality_metrics']
+            # If not, look directly in the result dictionary
+            elif all(key in result for key in ['mean_cc', 'mean_mse']):
+                metrics = result
+            # If metrics are in 'metrics' field
+            elif 'metrics' in result and isinstance(result['metrics'], dict):
+                metrics = result['metrics']
+            # No metrics found
+            else:
                 print(f"Skipping result from {result.get('output_dir', 'unknown')} - missing metrics")
+                continue
+            
+            # Double check we have the necessary metrics
+            if not all(key in metrics for key in ['mean_cc', 'mean_mse']):
+                print(f"Skipping result from {result.get('output_dir', 'unknown')} - incomplete metrics")
                 continue
             
             row = {
                 'grid_sampling_factor': params.get('grid_sampling_factor', 'unknown'),
                 'scale_sampling': params.get('scale_sampling', 'unknown'),
                 'speed_factor': params.get('speed_factor', 'unknown'),
+                'final_scale': params.get('final_scale', 1.0),
+                'scale_levels': params.get('scale_levels', 5),
+                'final_grid_sampling': params.get('final_grid_sampling', 16),
+                'noise_factor': params.get('noise_factor', 1.0),
                 'mean_mse': metrics.get('mean_mse', 0),
                 'std_mse': metrics.get('std_mse', 0),
                 'mean_cc': metrics.get('mean_cc', 0),
@@ -375,6 +416,10 @@ def analyze_results(results, baseline_metrics=None):
             'grid_sampling_factor': 'baseline',
             'scale_sampling': 'baseline',
             'speed_factor': 'baseline',
+            'final_scale': 'baseline',
+            'scale_levels': 'baseline',
+            'final_grid_sampling': 'baseline',
+            'noise_factor': 'baseline',
             'mean_mse': baseline_metrics['mean_mse'],
             'std_mse': baseline_metrics['std_mse'],
             'mean_cc': baseline_metrics['mean_cc'],
@@ -445,7 +490,9 @@ def create_comparison_visualizations(df, top_params, output_dir):
     
     # Create parameter set labels
     top_with_baseline['param_label'] = top_with_baseline.apply(
-        lambda x: f"grid={x['grid_sampling_factor']}, scale={x['scale_sampling']}, speed={x['speed_factor']}" 
+        lambda x: (f"grid={x['grid_sampling_factor']}, scale={x['scale_sampling']}, "
+                   f"speed={x['speed_factor']}, levels={x['scale_levels']}, "
+                   f"finalgrid={x['final_grid_sampling']}")
         if x['grid_sampling_factor'] != 'baseline' else 'Baseline',
         axis=1
     )
@@ -665,7 +712,7 @@ def main():
     baseline_exists = baseline_dir.exists() and baseline_template_path.exists() and baseline_metrics_path.exists()
     
     # Case 1: User wants to create baseline and it doesn't exist
-    if args.create_baseline and not baseline_exists:
+    if args.create_baseline:
         print("Creating new baseline template...")
         baseline_template, unregistered_images, baseline_metrics = create_baseline_template(
             brain_images, args.downscale, output_dir
@@ -696,8 +743,8 @@ def main():
     create_comparison_visualizations(df, top_params, output_dir)
     
     # Compare templates
-    if baseline_template is not None:
-        compare_templates(results_dir, baseline_template, output_dir)
+    # if baseline_template is not None:
+    #     compare_templates(results_dir, baseline_template, output_dir)
     
     print(f"\nComparison completed successfully! Results saved to: {output_dir}")
     
@@ -706,7 +753,11 @@ def main():
     for i, row in top_params.iterrows():
         print(f"{i+1}. grid={row['grid_sampling_factor']}, "
               f"scale={row['scale_sampling']}, "
-              f"speed={row['speed_factor']}: "
+              f"speed={row['speed_factor']}, "
+              f"final_scale={row['final_scale']}, "
+              f"scale_levels={row['scale_levels']}, "
+              f"final_grid_sampling={row['final_grid_sampling']}, "
+              f"noise_factor={row['noise_factor']}: "
               f"mean_cc={row['mean_cc']:.4f}, "
               f"mean_mse={row['mean_mse']:.4f}, "
               f"time={row['elapsed_time']:.2f}s")

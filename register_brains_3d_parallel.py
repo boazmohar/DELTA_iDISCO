@@ -84,8 +84,8 @@ def parse_args():
                         help='Path to the data directory containing animal folders')
     parser.add_argument('--output_dir', type=str, required=True,
                         help='Path to the output directory for registration results')
-    parser.add_argument('--downscale', type=float, default=0.25,
-                        help='Factor to downscale images for faster processing (default: 0.25)')
+    parser.add_argument('--downscale', type=float, default=0.2,
+                        help='Factor to downscale images for faster processing (default: 0.2)')
    
     # Parameter ranges for scanning
     parser.add_argument('--grid_sampling_factors', type=float, nargs='+', default=[0.5, 0.7, 1.0],
@@ -134,7 +134,7 @@ def find_brain_images(data_dir):
     
     return brain_images
 
-def load_and_preprocess_image(file_path, downscale_factor=0.1):
+def load_and_preprocess_image(file_path, downscale_factor=0.2):
     """Load and preprocess a 3D brain image
     
     Args:
@@ -752,6 +752,7 @@ def main():
         'parameter_sets': int(len(param_combinations)),
         'elapsed_time': float(overall_elapsed_time),
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'downscale': float(args.downscale),  # Add downscale factor to top-level structure
         'results': all_results
     }
     

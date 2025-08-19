@@ -33,3 +33,9 @@ python register_brains_3d_parallel.py \
     --downscale 0.2 \
     --save_visualizations \
     --max_processes 44 
+
+python compare_registration_results.py \
+    --results_dir /nearline/spruston/Boaz/DELTA/I2/20250111_IDISCO_MouseCity3/registration_results_param_scan \
+    --data_dir /nearline/spruston/Boaz/DELTA/I2/20250111_IDISCO_MouseCity3/ \
+    --create_baseline \
+    --downscale 0.2
