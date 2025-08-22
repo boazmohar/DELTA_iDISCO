@@ -23,6 +23,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import pirt
+from pirt.reg import ElastixRegistration_affine
 import tifffile
 import h5py
 from pathlib import Path
@@ -33,6 +34,7 @@ import itertools
 import time
 import json
 import logging
+import os
 from datetime import datetime
 from src.DELAT_utils import read_h5_image
 
@@ -90,6 +92,8 @@ def parse_args():
                         help='Resolution level to use from h5 file (1=Data, 2=Data_2_2_2, 4=Data_4_4_4)')
     parser.add_argument('--threshold', type=int, default=100, 
                         help='Threshold value for h5 image reading (default: 100)')
+    parser.add_argument('--elastix_path', type=str, default=None,
+                        help='Path to elastix executable directory for affine registration')
    
     # Parameter ranges for scanning
     parser.add_argument('--grid_sampling_factors', type=float, nargs='+', default=[0.5, 0.7, 1.0],
@@ -180,7 +184,7 @@ def load_and_preprocess_h5_image(file_path, threshold=100, h5_resolution=1):
     
     return img
 
-def register_brain_images(images, settings, logger):
+def register_brain_images(images, settings, logger, cache_dir=None):
     """Register 3D brain images using pirt's DiffeomorphicDemonsRegistration
     
     Args:
@@ -238,9 +242,72 @@ def register_brain_images(images, settings, logger):
         # Log info about pirt version if available
         logger.debug(f"PIRT version: {pirt.__version__ if hasattr(pirt, '__version__') else 'unknown'}")
         
-        # Create registration object
+        # Check if we have more than one image - if so, use affine as initialization
+        if len(image_list) > 1:
+            logger.info("Starting with affine registration as initialization step")
+            print("Starting with affine registration as initialization step")
+            
+            # Create a reference image (first image)
+            reference_img = image_list[0]
+            
+            # Create affine-initialized list
+            affine_imgs = [reference_img]  # Keep the reference image as-is
+            
+            # Check if cache directory exists and create it if needed
+            if cache_dir is not None:
+                os.makedirs(cache_dir, exist_ok=True)
+            
+            # For each additional image, perform affine registration to the reference
+            for i, img in enumerate(image_list[1:], 1):
+                # Generate cache filename based on image hash if caching is enabled
+                cache_file = None
+                if cache_dir is not None:
+                    # Create a simple hash from the image data for caching
+                    img_hash = hash(str(img.shape) + str(np.mean(img)) + str(np.std(img)))
+                    ref_hash = hash(str(reference_img.shape) + str(np.mean(reference_img)) + str(np.std(reference_img)))
+                    cache_file = os.path.join(cache_dir, f"affine_reg_img_{i}_{img_hash}_{ref_hash}.npy")
+                    
+                    # Try to load from cache
+                    if os.path.exists(cache_file):
+                        try:
+                            logger.info(f"Loading affine registration from cache for image {i}")
+                            affine_img = np.load(cache_file)
+                            affine_imgs.append(affine_img)
+                            continue  # Skip to next image
+                        except Exception as e:
+                            logger.warning(f"Failed to load from cache: {str(e)}")
+                
+                # If not cached or loading failed, perform affine registration
+                logger.info(f"Performing affine registration for image {i}")
+                
+                # Use ElastixRegistration_affine class as requested
+                reg_affine = ElastixRegistration_affine(reference_img, img)
+                
+                # Register with affine model
+                affine_img = reg_affine.register(verbose=0)
+                
+                # Store the result
+                affine_imgs.append(affine_img)
+                
+                # Cache the result if caching is enabled
+                if cache_file is not None:
+                    try:
+                        np.save(cache_file, affine_img)
+                        logger.info(f"Cached affine registration for image {i}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cache affine result: {str(e)}")
+            
+            # Use the affine-registered images for the diffeomorphic registration
+            logger.info("Using affine-registered images for diffeomorphic registration")
+            reg_input_images = affine_imgs
+        else:
+            # If only one image, skip affine registration
+            logger.info("Only one image, skipping affine registration")
+            reg_input_images = image_list
+        
+        # Create registration object with affine-initialized images
         logger.debug("Creating DiffeomorphicDemonsRegistration object")
-        reg = pirt.DiffeomorphicDemonsRegistration(*image_list)
+        reg = pirt.DiffeomorphicDemonsRegistration(*reg_input_images)
         
         # Set registration parameters
         logger.debug("Setting registration parameters")
@@ -256,8 +323,8 @@ def register_brain_images(images, settings, logger):
         logger.debug(f"Registration params: {reg.params.__dict__ if hasattr(reg.params, '__dict__') else 'Not available'}")
         
         # Perform registration
-        print("Starting registration - this may take a while for 3D volumes...")
-        logger.info("Starting registration")
+        print("Starting diffeomorphic registration - this may take a while for 3D volumes...")
+        logger.info("Starting diffeomorphic registration")
         start_time = time.time()
         reg.register(verbose=1)
         end_time = time.time()
@@ -499,7 +566,7 @@ def create_visualizations(original_images, transformed_images, template, output_
     
     print(f"Saved visualizations to {viz_dir}")
 
-def process_parameter_set(loaded_images, param_set, output_dir, save_visualizations=False, animal_ids=None):
+def process_parameter_set(loaded_images, param_set, output_dir, save_visualizations=False, animal_ids=None, cache_dir=None, elastix_path=None):
     """Process a single parameter set
     
     Args:
@@ -508,10 +575,18 @@ def process_parameter_set(loaded_images, param_set, output_dir, save_visualizati
         output_dir (Path): Path to the output directory
         save_visualizations (bool): Whether to generate visualizations
         animal_ids (list): List of animal IDs
+        cache_dir (str, optional): Directory for caching results
+        elastix_path (str, optional): Path to elastix executables
         
     Returns:
         dict: Results including metrics and paths
     """
+    # Set ELASTIX_PATH environment variable if provided
+    if elastix_path is not None:
+        os.environ['ELASTIX_PATH'] = elastix_path
+        print(f"Process {os.getpid()} using ELASTIX_PATH={elastix_path}")
+    
+    # Get process ID
     process_id = os.getpid()
     
     # Create parameter-specific output directory for this run
@@ -548,7 +623,7 @@ def process_parameter_set(loaded_images, param_set, output_dir, save_visualizati
         
         # Register brain images
         logger.info("Starting brain registration")
-        reg, deforms, transformed_images, elapsed_time = register_brain_images(loaded_images, param_set, logger)
+        reg, deforms, transformed_images, elapsed_time = register_brain_images(loaded_images, param_set, logger, cache_dir=cache_dir)
         
         # Calculate average template
         logger.info("Calculating average template")
@@ -627,6 +702,10 @@ def main():
     """Main function"""
     # Parse arguments
     args = parse_args()
+    
+    # Setup cache directory
+    cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'registration_cache')
+    os.makedirs(cache_dir, exist_ok=True)
     
     # Convert paths to Path objects
     data_dir = Path(args.data_dir)
@@ -738,7 +817,7 @@ def main():
             main_logger.debug(f"Submitting parameter set {i+1}/{len(param_sets)}: {param_set}")
             result = pool.apply_async(
                 process_parameter_set, 
-                args=(shared_loaded_images, param_set, output_dir, args.save_visualizations, animal_ids)
+                args=(shared_loaded_images, param_set, output_dir, args.save_visualizations, animal_ids, cache_dir, args.elastix_path)
             )
             results.append(result)
         
