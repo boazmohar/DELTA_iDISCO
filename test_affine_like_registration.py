@@ -11,6 +11,8 @@ import argparse
 from pathlib import Path
 import h5py
 import time
+import tifffile
+from scipy import ndimage
 
 # Try to import pirt
 try:
@@ -31,6 +33,12 @@ def parse_args():
     parser.add_argument('--dataset', type=str, default='Data_4_4_4',
                         choices=['Data', 'Data_2_2_2', 'Data_4_4_4'],
                         help='Dataset to use from the h5 files')
+    parser.add_argument('--filter_sigma', type=float, default=1.0,
+                        help='Sigma value for Gaussian filter (0 to disable)')
+    parser.add_argument('--median_size', type=int, default=0,
+                        help='Size of median filter kernel (0 to disable)')
+    parser.add_argument('--save_filtered', action='store_true',
+                        help='Save the filtered images as TIFF files')
     return parser.parse_args()
 
 def read_h5_image(file_path, dataset_name='Data', threshold=100):
@@ -60,27 +68,21 @@ def read_h5_image(file_path, dataset_name='Data', threshold=100):
         print(f"Error reading h5 file: {e}")
         return None
 
-def create_max_projections(img, prefix, output_dir):
-    import tifffile
-    """Create and save maximum intensity projections of a 3D image
+def save_3d_image(img, name, output_dir):
+    """Save a 3D image as a TIFF file
     
     Args:
         img: 3D image array
-        prefix: Prefix for the output filenames
-        output_dir: Directory to save the projections
+        name: Name for the output file
+        output_dir: Directory to save the file
         
     Returns:
-        List of paths to the saved projections
+        Path to the saved file
     """
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create maximum intensity projections
-    max_xy = np.max(img, axis=0)  # Max along Z-axis
-    max_xz = np.max(img, axis=1)  # Max along Y-axis
-    max_yz = np.max(img, axis=2)  # Max along X-axis
-    
-    # Convert to uint16 for TIFF files
+    # Convert to uint16 for TIFF file
     def to_uint16(img):
         # Rescale to full uint16 range
         img_min, img_max = np.min(img), np.max(img)
@@ -90,155 +92,13 @@ def create_max_projections(img, prefix, output_dir):
             scaled = img
         return scaled.astype(np.uint16)
     
-    # Convert projections to uint16
-    max_xy_uint16 = to_uint16(max_xy)
-    max_xz_uint16 = to_uint16(max_xz)
-    max_yz_uint16 = to_uint16(max_yz)
+    # Save as TIFF file using tifffile
+    file_path = os.path.join(output_dir, f"{name}.tif")
+    tifffile.imwrite(file_path, to_uint16(img))
     
-    # Save as TIFF files using tifffile
-    xy_path = os.path.join(output_dir, f"{prefix}_xy_projection.tif")
-    xz_path = os.path.join(output_dir, f"{prefix}_xz_projection.tif")
-    yz_path = os.path.join(output_dir, f"{prefix}_yz_projection.tif")
-    
-    tifffile.imwrite(xy_path, max_xy_uint16)
-    tifffile.imwrite(xz_path, max_xz_uint16)
-    tifffile.imwrite(yz_path, max_yz_uint16)
-    
-    print(f"Saved TIFF projections for {prefix}:")
-    print(f"  XY: {xy_path}")
-    print(f"  XZ: {xz_path}")
-    print(f"  YZ: {yz_path}")
-    
-    # Also create visualization PNGs for quick viewing
-    import matplotlib.pyplot as plt
-    
-    # XY projection (axial)
-    plt.figure(figsize=(10, 10))
-    plt.imshow(max_xy, cmap='gray')
-    plt.title(f"{prefix} - XY Projection (Axial)")
-    plt.colorbar()
-    plt.savefig(os.path.join(output_dir, f"{prefix}_xy_projection_viz.png"), dpi=150)
-    plt.close()
-    
-    # XZ projection (coronal)
-    plt.figure(figsize=(10, 5))
-    plt.imshow(max_xz, cmap='gray')
-    plt.title(f"{prefix} - XZ Projection (Coronal)")
-    plt.colorbar()
-    plt.savefig(os.path.join(output_dir, f"{prefix}_xz_projection_viz.png"), dpi=150)
-    plt.close()
-    
-    # YZ projection (sagittal)
-    plt.figure(figsize=(5, 10))
-    plt.imshow(max_yz, cmap='gray')
-    plt.title(f"{prefix} - YZ Projection (Sagittal)")
-    plt.colorbar()
-    plt.savefig(os.path.join(output_dir, f"{prefix}_yz_projection_viz.png"), dpi=150)
-    plt.close()
-    
-    return [xy_path, xz_path, yz_path]
+    print(f"Saved 3D image: {file_path}")
+    return file_path
 
-def create_comparison_figure(ref_img, mov_img, reg_img, output_dir):
-    """Create a comparison figure showing all three images
-    
-    Args:
-        ref_img: Reference image
-        mov_img: Moving image before registration
-        reg_img: Moving image after registration
-        output_dir: Directory to save the figure
-        
-    Returns:
-        Path to the saved figure
-    """
-    # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Create maximum intensity projections for all three images
-    max_xy_ref = np.max(ref_img, axis=0)  # Reference XY
-    max_xy_mov = np.max(mov_img, axis=0)  # Moving XY
-    max_xy_reg = np.max(reg_img, axis=0)  # Registered XY
-    
-    max_xz_ref = np.max(ref_img, axis=1)  # Reference XZ
-    max_xz_mov = np.max(mov_img, axis=1)  # Moving XZ
-    max_xz_reg = np.max(reg_img, axis=1)  # Registered XZ
-    
-    # Convert to uint16 for TIFF files
-    def to_uint16(img):
-        # Rescale to full uint16 range
-        img_min, img_max = np.min(img), np.max(img)
-        if img_max > img_min:
-            scaled = (img - img_min) / (img_max - img_min) * 65535
-        else:
-            scaled = img
-        return scaled.astype(np.uint16)
-    
-    # Save each projection as a separate TIFF file
-    tifffile.imwrite(os.path.join(output_dir, "comparison_xy_reference.tif"), to_uint16(max_xy_ref))
-    tifffile.imwrite(os.path.join(output_dir, "comparison_xy_moving.tif"), to_uint16(max_xy_mov))
-    tifffile.imwrite(os.path.join(output_dir, "comparison_xy_registered.tif"), to_uint16(max_xy_reg))
-    
-    tifffile.imwrite(os.path.join(output_dir, "comparison_xz_reference.tif"), to_uint16(max_xz_ref))
-    tifffile.imwrite(os.path.join(output_dir, "comparison_xz_moving.tif"), to_uint16(max_xz_mov))
-    tifffile.imwrite(os.path.join(output_dir, "comparison_xz_registered.tif"), to_uint16(max_xz_reg))
-    
-    # Also save the original 3D registered image
-    tifffile.imwrite(os.path.join(output_dir, "registered_3d.tif"), to_uint16(reg_img))
-    
-    # Normalize for better visualization in PNG
-    def normalize(img):
-        img_min, img_max = np.min(img), np.max(img)
-        if img_max > img_min:
-            return (img - img_min) / (img_max - img_min)
-        return img
-    
-    # Normalize all projections for PNG visualization
-    projections = [max_xy_ref, max_xy_mov, max_xy_reg, max_xz_ref, max_xz_mov, max_xz_reg]
-    normalized = [normalize(proj) for proj in projections]
-    
-    max_xy_ref, max_xy_mov, max_xy_reg, max_xz_ref, max_xz_mov, max_xz_reg = normalized
-    
-    # Create the comparison figure for visualization
-    import matplotlib.pyplot as plt
-    
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    
-    # XY projections
-    axes[0, 0].imshow(max_xy_ref, cmap='gray')
-    axes[0, 0].set_title('Reference - XY')
-    axes[0, 0].axis('off')
-    
-    axes[0, 1].imshow(max_xy_mov, cmap='gray')
-    axes[0, 1].set_title('Moving - XY')
-    axes[0, 1].axis('off')
-    
-    axes[0, 2].imshow(max_xy_reg, cmap='gray')
-    axes[0, 2].set_title('Registered - XY')
-    axes[0, 2].axis('off')
-    
-    # XZ projections
-    axes[1, 0].imshow(max_xz_ref, cmap='gray')
-    axes[1, 0].set_title('Reference - XZ')
-    axes[1, 0].axis('off')
-    
-    axes[1, 1].imshow(max_xz_mov, cmap='gray')
-    axes[1, 1].set_title('Moving - XZ')
-    axes[1, 1].axis('off')
-    
-    axes[1, 2].imshow(max_xz_reg, cmap='gray')
-    axes[1, 2].set_title('Registered - XZ')
-    axes[1, 2].axis('off')
-    
-    plt.tight_layout()
-    fig_path = os.path.join(output_dir, "registration_comparison.png")
-    plt.savefig(fig_path, dpi=200)
-    plt.close()
-    
-    print("Saved comparison files:")
-    print("  PNG visualization: registration_comparison.png")
-    print("  TIFF projections: comparison_*.tif")
-    print("  3D registered image: registered_3d.tif")
-    
-    return fig_path
 
 def perform_affine_like_registration(img1, img2):
     """
@@ -280,6 +140,31 @@ def perform_affine_like_registration(img1, img2):
     
     return transformed, deform, elapsed_time
 
+def apply_filters(img, sigma=0, median_size=0):
+    """Apply filtering to reduce noise and artifacts
+    
+    Args:
+        img: Input 3D image array
+        sigma: Sigma for Gaussian filter (0 to disable)
+        median_size: Size of median filter kernel (0 to disable)
+        
+    Returns:
+        Filtered image
+    """
+    filtered = img.copy()
+    
+    # Apply Gaussian filter if sigma > 0
+    if sigma > 0:
+        print(f"Applying Gaussian filter with sigma={sigma}...")
+        filtered = ndimage.gaussian_filter(filtered, sigma=sigma)
+    
+    # Apply median filter if median_size > 0
+    if median_size > 0:
+        print(f"Applying median filter with size={median_size}...")
+        filtered = ndimage.median_filter(filtered, size=median_size)
+    
+    return filtered
+
 def main():
     args = parse_args()
     
@@ -287,6 +172,7 @@ def main():
     print("\n=== Environment Information ===")
     print(f"Python version: {sys.version}")
     print(f"Current working directory: {os.getcwd()}")
+    print(f"Filter settings: Gaussian sigma={args.filter_sigma}, Median size={args.median_size}")
     
     # Create output directory
     output_dir = args.output_dir
@@ -298,31 +184,59 @@ def main():
     print(f"Moving file: {args.moving_h5_file}")
     
     # Load the reference image
-    img1 = read_h5_image(args.reference_h5_file, args.dataset, 100)
-    if img1 is None:
+    img1_orig = read_h5_image(args.reference_h5_file, args.dataset, 100)
+    if img1_orig is None:
         print(f"Failed to read {args.dataset} from reference file.")
         sys.exit(1)
     
     # Load the moving image
-    img2 = read_h5_image(args.moving_h5_file, args.dataset, 100)
-    if img2 is None:
+    img2_orig = read_h5_image(args.moving_h5_file, args.dataset, 100)
+    if img2_orig is None:
         print(f"Failed to read {args.dataset} from moving file.")
         sys.exit(1)
     
-    print(f"Loaded reference image with shape {img1.shape}")
-    print(f"Loaded moving image with shape {img2.shape}")
+    print(f"Loaded reference image with shape {img1_orig.shape}")
+    print(f"Loaded moving image with shape {img2_orig.shape}")
     
     # Check if images have the same shape
-    if img1.shape != img2.shape:
+    if img1_orig.shape != img2_orig.shape:
         print("Warning: Images have different shapes. Resizing moving image to match reference...")
         from skimage import transform
-        img2 = transform.resize(img2, img1.shape, anti_aliasing=True, preserve_range=True)
-        print(f"Resized moving image to shape {img2.shape}")
+        img2_orig = transform.resize(img2_orig, img1_orig.shape, anti_aliasing=True, preserve_range=True)
+        print(f"Resized moving image to shape {img2_orig.shape}")
     
-    # Create max projections of original images
-    print("\n=== Creating Max Projections of Original Images ===")
-    create_max_projections(img1, "reference", output_dir)
-    create_max_projections(img2, "moving", output_dir)
+    # Save original 3D images
+    print("\n=== Saving Original 3D Images ===")
+    save_3d_image(img1_orig, "reference_original", output_dir)
+    save_3d_image(img2_orig, "moving_original", output_dir)
+    
+    # Apply filtering to reduce artifacts
+    print("\n=== Applying Filters to Reduce Artifacts ===")
+    img1 = apply_filters(img1_orig, sigma=args.filter_sigma, median_size=args.median_size)
+    img2 = apply_filters(img2_orig, sigma=args.filter_sigma, median_size=args.median_size)
+    
+    # Save filtered images if requested
+    if args.save_filtered:
+        print("Saving filtered images...")
+        os.makedirs(os.path.join(output_dir, "filtered"), exist_ok=True)
+        
+        # Convert to uint16 for saving
+        def to_uint16(img):
+            # Rescale to full uint16 range
+            img_min, img_max = np.min(img), np.max(img)
+            if img_max > img_min:
+                scaled = (img - img_min) / (img_max - img_min) * 65535
+            else:
+                scaled = img
+            return scaled.astype(np.uint16)
+        
+        # Save the 3D filtered images
+        tifffile.imwrite(os.path.join(output_dir, "filtered", "reference_filtered.tif"), to_uint16(img1))
+        tifffile.imwrite(os.path.join(output_dir, "filtered", "moving_filtered.tif"), to_uint16(img2))
+        
+        # Save filtered 3D images
+        save_3d_image(img1, "reference_filtered", output_dir)
+        save_3d_image(img2, "moving_filtered", output_dir)
     
     # Test registration
     print("\n=== Testing Affine-like Registration ===")
@@ -331,14 +245,9 @@ def main():
         print(f"Registration successful. Transformed image shape: {transformed.shape}")
         print(f"Time taken: {elapsed_time:.2f} seconds")
         
-        # Create max projections of registered image
-        print("\n=== Creating Max Projections of Registered Image ===")
-        create_max_projections(transformed, "registered", output_dir)
-        
-        # Create comparison figure
-        print("\n=== Creating Comparison Figure ===")
-        comparison_path = create_comparison_figure(img1, img2, transformed, output_dir)
-        print(f"Saved comparison figure to: {comparison_path}")
+        # Save registered 3D image
+        print("\n=== Saving Registered 3D Image ===")
+        save_3d_image(transformed, "registered", output_dir)
         
         # Calculate similarity before and after registration
         mse_before = np.mean((img1 - img2) ** 2)

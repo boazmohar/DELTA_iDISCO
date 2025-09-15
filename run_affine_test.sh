@@ -30,7 +30,11 @@ python test_affine_like_registration.py \
   --reference_h5_file "$REF_H5_FILE" \
   --moving_h5_file "$MOV_H5_FILE" \
   --output_dir "$OUTPUT_DIR" \
-  --dataset "Data_4_4_4"
+  --dataset "Data_4_4_4" \
+  
+  --filter_sigma 0.5 \
+  --median_size 0 \
+  --save_filtered
 
 # Show the exit status
 STATUS=$?
